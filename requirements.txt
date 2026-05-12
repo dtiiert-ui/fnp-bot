@@ -12,5 +12,5 @@ docx2txt
 pymupdf
 tiktoken
 sentence_transformers
-protobuf==4.25.3
+protobuf==3.20.3
 hf_transfer
