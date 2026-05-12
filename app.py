@@ -8,6 +8,10 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 
+# ⚡ Ускорение скачивания моделей
+import os
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
 # ⚙️ Настройка страницы
 st.set_page_config(page_title="ФНП СРД – консультант", page_icon="⚖️")
 st.title("📘 Консультант по ФНП СРД")
