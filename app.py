@@ -56,8 +56,10 @@ def load_rag_chain():
     )
 
     # 6️⃣ Системный промпт
-    system_prompt = (
-      "Ты — эксперт по промышленной безопасности, отвечающий строго по загруженному документу «ФНП СРД.docx».\n"
+system_prompt = (
+    "Ты — эксперт по промышленной безопасности, отвечающий строго по загруженному документу «ФНП СРД.docx».\n"
+    "Если в запросе присутствует «История диалога», используй её только для понимания уточняющих вопросов (например, «а какие требования к ним?»).\n"
+    "Ответ ВСЕГДА формируй на основе предоставленных ниже фрагментов документа, даже если в истории диалога содержится другая информация.\n"
     "Правила:\n"
     "1. Используй ТОЛЬКО предоставленный контекст (фрагменты документа).\n"
     "2. Если в контексте нет информации для ответа, напиши: «В документе не указано».\n"
@@ -66,7 +68,7 @@ def load_rag_chain():
     "5. Не придумывай ничего от себя.\n"
     "6. Если вопрос не относится к оборудованию под давлением, вежливо сообщи, что ты консультируешь только по ФНП СРД.\n"
     "Контекст:\n{context}"
-    )
+)
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
         ("human", "{question}"),
@@ -98,6 +100,7 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
 
 # 🔄 Обработка вопроса
+# 🔄 Обработка вопроса
 if prompt := st.chat_input("Введите ваш вопрос по ФНП СРД"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -105,7 +108,19 @@ if prompt := st.chat_input("Введите ваш вопрос по ФНП СР�
 
     with st.chat_message("assistant"):
         with st.spinner("Ищу в документе..."):
-            answer = qa_chain.invoke(prompt)
+            # Формируем контекст из последних N сообщений (например, 3)
+            history_context = ""
+            recent_msgs = st.session_state.messages[:-1]  # все, кроме последнего вопроса
+            if len(recent_msgs) > 0:
+                # берём последние 3 реплики для краткости
+                for msg in recent_msgs[-3:]:
+                    role = "Пользователь" if msg["role"] == "user" else "Ассистент"
+                    history_context += f"{role}: {msg['content']}\n"
+                history_context = f"История диалога:\n{history_context}\n"
+            
+            # Добавляем историю к вопросу
+            full_query = history_context + "Текущий вопрос: " + prompt if history_context else prompt
+            answer = qa_chain.invoke(full_query)
             st.markdown(answer)
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
