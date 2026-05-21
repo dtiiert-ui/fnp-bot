@@ -20,14 +20,15 @@ api_key = st.secrets["DEEPSEEK_API_KEY"]
 supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
 # 🆔 Управление идентификатором пользователя (сохраняется в URL)
-query_params = st.experimental_get_query_params()
+query_params = st.query_params
 if "user_id" not in query_params:
     # Генерируем новый ID и перезагружаем страницу с ним в параметрах
     user_id = str(uuid.uuid4())
-    st.experimental_set_query_params(user_id=user_id)
+    st.query_params.clear()
+    st.query_params.update({"user_id": user_id})
     st.stop()
 else:
-    user_id = query_params["user_id"][0]
+    user_id = query_params["user_id"]
 
 st.caption(f"Ваш ID сессии: `{user_id}` (сохраните ссылку, чтобы не потерять историю)")
 
