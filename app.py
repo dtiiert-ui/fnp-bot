@@ -30,7 +30,6 @@ if "user_id" not in query_params:
 else:
     user_id = query_params["user_id"]
 
-st.caption(f"Ваш ID сессии: `{user_id}` (сохраните ссылку, чтобы не потерять историю)")
 
 # 📎 Функция инициализации RAG-конвейера
 @st.cache_resource
