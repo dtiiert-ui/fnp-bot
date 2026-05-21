@@ -1,4 +1,6 @@
 import streamlit as st
+import uuid
+from supabase import create_client, Client
 from langchain_community.document_loaders import Docx2txtLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import ChatOpenAI
@@ -13,18 +15,29 @@ st.set_page_config(page_title="ФНП СРД – консультант", page_i
 st.title("📘 Консультант по ФНП СРД")
 st.caption("Задайте вопрос по оборудованию под давлением. Ответ – строго по тексту документа.")
 
-# 🔐 Читаем API-ключ из секретов Streamlit Cloud
+# 🔐 Читаем секреты
 api_key = st.secrets["DEEPSEEK_API_KEY"]
+supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+
+# 🆔 Управление идентификатором пользователя (сохраняется в URL)
+query_params = st.experimental_get_query_params()
+if "user_id" not in query_params:
+    # Генерируем новый ID и перезагружаем страницу с ним в параметрах
+    user_id = str(uuid.uuid4())
+    st.experimental_set_query_params(user_id=user_id)
+    st.stop()
+else:
+    user_id = query_params["user_id"][0]
+
+st.caption(f"Ваш ID сессии: `{user_id}` (сохраните ссылку, чтобы не потерять историю)")
 
 # 📎 Функция инициализации RAG-конвейера
 @st.cache_resource
 def load_rag_chain():
-    # 1️⃣ Загружаем документ
     file_path = "ФНП СРД.docx"
     loader = Docx2txtLoader(file_path)
     documents = loader.load()
 
-    # 2️⃣ Разбиваем на фрагменты (увеличенные chunk_size и overlap для лучшего поиска)
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1200,
         chunk_overlap=300,
@@ -32,18 +45,15 @@ def load_rag_chain():
     )
     docs = text_splitter.split_documents(documents)
 
-    # 3️⃣ Тяжёлая модель эмбеддингов (как ты просил)
     embeddings = HuggingFaceEmbeddings(
         model_name="intfloat/multilingual-e5-large",
         model_kwargs={'device': 'cpu'},
         encode_kwargs={'normalize_embeddings': True}
     )
 
-    # 4️⃣ Векторная база с увеличенным числом возвращаемых фрагментов
     vectorstore = Chroma.from_documents(docs, embeddings)
     retriever = vectorstore.as_retriever(search_kwargs={"k": 12})
 
-    # 5️⃣ Языковая модель DeepSeek
     llm = ChatOpenAI(
         model="deepseek-chat",
         openai_api_key=api_key,
@@ -51,7 +61,6 @@ def load_rag_chain():
         temperature=0,
     )
 
-    # 6️⃣ Улучшенный системный промпт (с учётом истории диалога)
     system_prompt = (
         "Ты — эксперт по промышленной безопасности, отвечающий строго по загруженному документу «ФНП СРД.docx».\n"
         "Если в запросе присутствует «История диалога», используй её только для понимания уточняющих вопросов (например, «а какие требования к ним?»).\n"
@@ -72,11 +81,9 @@ def load_rag_chain():
         ("human", "{question}"),
     ])
 
-    # 7️⃣ Функция форматирования документов
     def format_docs(docs):
         return "\n\n".join(doc.page_content for doc in docs)
 
-    # 8️⃣ Цепочка LCEL
     chain = (
         {"context": retriever | format_docs, "question": RunnablePassthrough()}
         | prompt
@@ -89,34 +96,45 @@ def load_rag_chain():
 with st.spinner("Загружаю документ и подготавливаю базу знаний..."):
     qa_chain = load_rag_chain()
 
-# 💬 История сообщений (для отображения в интерфейсе)
+# 📥 Загружаем историю из Supabase
 if "messages" not in st.session_state:
     st.session_state.messages = []
+    try:
+        res = supabase.table("messages").select("*").eq("user_id", user_id).order("created_at").execute()
+        if res.data:
+            for row in res.data:
+                st.session_state.messages.append({"role": row["role"], "content": row["content"]})
+    except Exception:
+        pass  # если база недоступна, продолжаем без истории
 
+# 💬 Отображаем историю
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# 🔄 Обработка вопроса с поддержкой контекста предыдущих сообщений
+# 🔄 Обработка вопроса
 if prompt := st.chat_input("Введите ваш вопрос по ФНП СРД"):
+    # Добавляем вопрос в локальный state и в базу
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
+    supabase.table("messages").insert({"user_id": user_id, "role": "user", "content": prompt}).execute()
 
     with st.chat_message("assistant"):
         with st.spinner("Ищу в документе..."):
-            # Собираем историю из последних 3 сообщений (если они есть)
+            # Собираем историю из последних 3 сообщений
             history_context = ""
-            recent_msgs = st.session_state.messages[:-1]  # все, кроме текущего вопроса
+            recent_msgs = st.session_state.messages[:-1]
             if len(recent_msgs) > 0:
                 for msg in recent_msgs[-3:]:
                     role = "Пользователь" if msg["role"] == "user" else "Ассистент"
                     history_context += f"{role}: {msg['content']}\n"
                 history_context = f"История диалога:\n{history_context}\n"
-            
-            # Формируем полный запрос
+
             full_query = history_context + "Текущий вопрос: " + prompt if history_context else prompt
             answer = qa_chain.invoke(full_query)
             st.markdown(answer)
 
+    # Сохраняем ответ в локальный state и в базу
     st.session_state.messages.append({"role": "assistant", "content": answer})
+    supabase.table("messages").insert({"user_id": user_id, "role": "assistant", "content": answer}).execute()
