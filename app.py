@@ -8,10 +8,6 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 
-# ⚡ Ускорение скачивания моделей
-import os
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-
 # ⚙️ Настройка страницы
 st.set_page_config(page_title="ФНП СРД – консультант", page_icon="⚖️")
 st.title("📘 Консультант по ФНП СРД")
@@ -28,7 +24,7 @@ def load_rag_chain():
     loader = Docx2txtLoader(file_path)
     documents = loader.load()
 
-    # 2️⃣ Разбиваем на фрагменты
+    # 2️⃣ Разбиваем на фрагменты (увеличенные chunk_size и overlap для лучшего поиска)
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1200,
         chunk_overlap=300,
@@ -36,14 +32,14 @@ def load_rag_chain():
     )
     docs = text_splitter.split_documents(documents)
 
-    # 3️⃣ Эмбеддинги (локальная модель, бесплатно)
+    # 3️⃣ Тяжёлая модель эмбеддингов (как ты просил)
     embeddings = HuggingFaceEmbeddings(
         model_name="intfloat/multilingual-e5-large",
         model_kwargs={'device': 'cpu'},
         encode_kwargs={'normalize_embeddings': True}
     )
 
-    # 4️⃣ Векторная база
+    # 4️⃣ Векторная база с увеличенным числом возвращаемых фрагментов
     vectorstore = Chroma.from_documents(docs, embeddings)
     retriever = vectorstore.as_retriever(search_kwargs={"k": 12})
 
@@ -55,28 +51,27 @@ def load_rag_chain():
         temperature=0,
     )
 
-    # 6️⃣ Системный промпт
-system_prompt = (
-    "Ты — эксперт по промышленной безопасности, отвечающий строго по загруженному документу «ФНП СРД.docx».\n"
-    "Если в запросе присутствует «История диалога», используй её только для понимания уточняющих вопросов (например, «а какие требования к ним?»).\n"
-    "Ответ ВСЕГДА формируй на основе предоставленных ниже фрагментов документа, даже если в истории диалога содержится другая информация.\n"
-    "Правила:\n"
-    "1. Используй ТОЛЬКО предоставленный контекст (фрагменты документа).\n"
-    "2. Если в контексте нет информации для ответа, напиши: «В документе не указано».\n"
-    "3. В ответе ОБЯЗАТЕЛЬНО указывай номера пунктов (например, п. 223) и приводи краткую цитату из документа.\n"
-    "4. Отвечай понятным языком, без излишней технической сложности, но точно.\n"
-    "5. Не придумывай ничего от себя.\n"
-    "6. Если вопрос не относится к оборудованию под давлением, вежливо сообщи, что ты консультируешь только по ФНП СРД.\n"
-    "Контекст:\n{context}"
-)
-def load_rag_chain():
-    # ... (другие строки с 4 пробелами)
-    prompt = ChatPromptTemplate.from_messages([   # ← строго 4 пробела
+    # 6️⃣ Улучшенный системный промпт (с учётом истории диалога)
+    system_prompt = (
+        "Ты — эксперт по промышленной безопасности, отвечающий строго по загруженному документу «ФНП СРД.docx».\n"
+        "Если в запросе присутствует «История диалога», используй её только для понимания уточняющих вопросов (например, «а какие требования к ним?»).\n"
+        "Ответ ВСЕГДА формируй на основе предоставленных ниже фрагментов документа, даже если в истории диалога содержится другая информация.\n"
+        "Правила:\n"
+        "1. Используй ТОЛЬКО предоставленный контекст (фрагменты документа).\n"
+        "2. Если в контексте нет информации для ответа, напиши: «В документе не указано».\n"
+        "3. В ответе ОБЯЗАТЕЛЬНО указывай номера пунктов (например, п. 223) и приводи краткую цитату из документа.\n"
+        "4. Отвечай понятным языком, без излишней технической сложности, но точно.\n"
+        "5. Не придумывай ничего от себя.\n"
+        "6. Если вопрос не относится к оборудованию под давлением, вежливо сообщи, что ты консультируешь только по ФНП СРД.\n"
+        "Контекст:\n{context}"
+    )
+
+    prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
         ("human", "{question}"),
     ])
 
-    # 7️⃣ Функция форматирования документов в строку
+    # 7️⃣ Функция форматирования документов
     def format_docs(docs):
         return "\n\n".join(doc.page_content for doc in docs)
 
@@ -93,7 +88,7 @@ def load_rag_chain():
 with st.spinner("Загружаю документ и подготавливаю базу знаний..."):
     qa_chain = load_rag_chain()
 
-# 💬 История сообщений
+# 💬 История сообщений (для отображения в интерфейсе)
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -101,8 +96,7 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# 🔄 Обработка вопроса
-# 🔄 Обработка вопроса
+# 🔄 Обработка вопроса с поддержкой контекста предыдущих сообщений
 if prompt := st.chat_input("Введите ваш вопрос по ФНП СРД"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -110,17 +104,16 @@ if prompt := st.chat_input("Введите ваш вопрос по ФНП СР�
 
     with st.chat_message("assistant"):
         with st.spinner("Ищу в документе..."):
-            # Формируем контекст из последних N сообщений (например, 3)
+            # Собираем историю из последних 3 сообщений (если они есть)
             history_context = ""
-            recent_msgs = st.session_state.messages[:-1]  # все, кроме последнего вопроса
+            recent_msgs = st.session_state.messages[:-1]  # все, кроме текущего вопроса
             if len(recent_msgs) > 0:
-                # берём последние 3 реплики для краткости
                 for msg in recent_msgs[-3:]:
                     role = "Пользователь" if msg["role"] == "user" else "Ассистент"
                     history_context += f"{role}: {msg['content']}\n"
                 history_context = f"История диалога:\n{history_context}\n"
             
-            # Добавляем историю к вопросу
+            # Формируем полный запрос
             full_query = history_context + "Текущий вопрос: " + prompt if history_context else prompt
             answer = qa_chain.invoke(full_query)
             st.markdown(answer)
