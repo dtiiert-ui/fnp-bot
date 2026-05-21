@@ -15,3 +15,4 @@ sentence_transformers
 protobuf==3.20.3
 hf_transfer
 supabase
+torchvision
