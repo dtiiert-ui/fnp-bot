@@ -69,7 +69,9 @@ system_prompt = (
     "6. Если вопрос не относится к оборудованию под давлением, вежливо сообщи, что ты консультируешь только по ФНП СРД.\n"
     "Контекст:\n{context}"
 )
-    prompt = ChatPromptTemplate.from_messages([
+def load_rag_chain():
+    # ... (другие строки с 4 пробелами)
+    prompt = ChatPromptTemplate.from_messages([   # ← строго 4 пробела
         ("system", system_prompt),
         ("human", "{question}"),
     ])
