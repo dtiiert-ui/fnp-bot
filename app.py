@@ -30,22 +30,22 @@ def load_rag_chain():
 
     # 2️⃣ Разбиваем на фрагменты
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
+        chunk_size=1200,
+        chunk_overlap=300,
         separators=["\n\n", "\n", " ", ""],
     )
     docs = text_splitter.split_documents(documents)
 
     # 3️⃣ Эмбеддинги (локальная модель, бесплатно)
     embeddings = HuggingFaceEmbeddings(
-        model_name="paraphrase-multilingual-MiniLM-L12-v2",
+        model_name="intfloat/multilingual-e5-large",
         model_kwargs={'device': 'cpu'},
         encode_kwargs={'normalize_embeddings': True}
     )
 
     # 4️⃣ Векторная база
     vectorstore = Chroma.from_documents(docs, embeddings)
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 8})
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 12})
 
     # 5️⃣ Языковая модель DeepSeek
     llm = ChatOpenAI(
@@ -57,14 +57,15 @@ def load_rag_chain():
 
     # 6️⃣ Системный промпт
     system_prompt = (
-        "Ты — эксперт по промышленной безопасности, отвечающий строго по загруженному документу «ФНП СРД.docx».\n"
-        "Правила:\n"
-        "1. Используй ТОЛЬКО предоставленный контекст (фрагменты документа).\n"
-        "2. Если в контексте нет информации для ответа, напиши: «В документе не указано».\n"
-        "3. В ответе обязательно указывай номера пунктов (например, п. 223).\n"
-        "4. Отвечай кратко, по существу, без приветствий и лишних слов.\n"
-        "5. Не придумывай ничего от себя.\n"
-        "Контекст:\n{context}"
+      "Ты — эксперт по промышленной безопасности, отвечающий строго по загруженному документу «ФНП СРД.docx».\n"
+    "Правила:\n"
+    "1. Используй ТОЛЬКО предоставленный контекст (фрагменты документа).\n"
+    "2. Если в контексте нет информации для ответа, напиши: «В документе не указано».\n"
+    "3. В ответе ОБЯЗАТЕЛЬНО указывай номера пунктов (например, п. 223) и приводи краткую цитату из документа.\n"
+    "4. Отвечай понятным языком, без излишней технической сложности, но точно.\n"
+    "5. Не придумывай ничего от себя.\n"
+    "6. Если вопрос не относится к оборудованию под давлением, вежливо сообщи, что ты консультируешь только по ФНП СРД.\n"
+    "Контекст:\n{context}"
     )
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
