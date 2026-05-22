@@ -22,14 +22,12 @@ supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABAS
 # 🆔 Управление идентификатором пользователя (сохраняется в URL)
 query_params = st.query_params
 if "user_id" not in query_params:
-    # Генерируем новый ID и перезагружаем страницу с ним в параметрах
     user_id = str(uuid.uuid4())
     st.query_params.clear()
     st.query_params.update({"user_id": user_id})
     st.stop()
 else:
     user_id = query_params["user_id"]
-
 
 # 📎 Функция инициализации RAG-конвейера
 @st.cache_resource
@@ -63,16 +61,15 @@ def load_rag_chain():
 
     system_prompt = (
         "Ты — эксперт по промышленной безопасности, отвечающий строго по загруженному документу «ФНП СРД.docx».\n"
-        "Если в запросе присутствует «История диалога», используй её только для понимания уточняющих вопросов (например, «а какие требования к ним?»).\n"
-        "Ответ ВСЕГДА формируй на основе предоставленных ниже фрагментов документа, даже если в истории диалога содержится другая информация.\n"
+        "Если в запросе присутствует «История диалога», используй её только для понимания уточняющих вопросов.\n"
+        "Ответ ВСЕГДА формируй на основе предоставленных ниже фрагментов документа.\n"
         "Правила:\n"
-        "1. Используй ТОЛЬКО предоставленный контекст (фрагменты документа).\n"
-        "2. Если в контексте нет информации для ответа, напиши: «В документе не указано».\n"
-        "3. В ответе ОБЯЗАТЕЛЬНО указывай номера пунктов (например, п. 223) и приводи краткую цитату из документа.\n"
-        "4. Отвечай понятным языком, без излишней технической сложности, но точно.\n"
+        "1. Используй ТОЛЬКО предоставленный контекст.\n"
+        "2. Сначала дай краткий ответ своими словами, объясняя суть простым языком.\n"
+        "3. После этого перечисли конкретные пункты (например, «п. 223»), которые относятся к вопросу, и приведи краткую цитату из документа для каждого.\n"
+        "4. Если в контексте нет информации, напиши: «В документе не указано».\n"
         "5. Не придумывай ничего от себя.\n"
-        "6. Если вопрос не относится к оборудованию под давлением, вежливо сообщи, что ты консультируешь только по ФНП СРД.\n"
-        "7. Строго соблюдай перечни, количество и названия должностных лиц, оборудования, документов и других сущностей, указанных в пунктах. Не добавляй новых позиций и не разделяй существующие на несколько.\n"
+        "6. Строго соблюдай перечни должностных лиц, оборудования и других сущностей, указанные в пунктах.\n"
         "Контекст:\n{context}"
     )
 
@@ -105,36 +102,48 @@ if "messages" not in st.session_state:
             for row in res.data:
                 st.session_state.messages.append({"role": row["role"], "content": row["content"]})
     except Exception:
-        pass  # если база недоступна, продолжаем без истории
+        pass
 
 # 💬 Отображаем историю
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
+# 🧠 Чекбокс для включения контекста диалога
+with st.sidebar:
+    use_context = st.checkbox("Учитывать контекст диалога", value=False,
+                              help="Если включено, бот будет понимать уточняющие вопросы, но строго по документу")
+
 # 🔄 Обработка вопроса
 if prompt := st.chat_input("Введите ваш вопрос по ФНП СРД"):
-    # Добавляем вопрос в локальный state и в базу
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
-    supabase.table("messages").insert({"user_id": user_id, "role": "user", "content": prompt}).execute()
+
+    # Сохраняем вопрос в Supabase
+    try:
+        supabase.table("messages").insert({"user_id": user_id, "role": "user", "content": prompt}).execute()
+    except Exception:
+        pass
 
     with st.chat_message("assistant"):
         with st.spinner("Ищу в документе..."):
-            # Собираем историю из последних 3 сообщений
             history_context = ""
-            recent_msgs = st.session_state.messages[:-1]
-            if len(recent_msgs) > 0:
-                for msg in recent_msgs[-3:]:
-                    role = "Пользователь" if msg["role"] == "user" else "Ассистент"
-                    history_context += f"{role}: {msg['content']}\n"
-                history_context = f"История диалога:\n{history_context}\n"
+            if use_context:
+                recent_msgs = st.session_state.messages[:-1]
+                if len(recent_msgs) > 0:
+                    for msg in recent_msgs[-3:]:
+                        role = "Пользователь" if msg["role"] == "user" else "Ассистент"
+                        history_context += f"{role}: {msg['content']}\n"
+                    history_context = f"История диалога:\n{history_context}\n"
 
             full_query = history_context + "Текущий вопрос: " + prompt if history_context else prompt
             answer = qa_chain.invoke(full_query)
             st.markdown(answer)
 
-    # Сохраняем ответ в локальный state и в базу
+    # Сохраняем ответ в Supabase
     st.session_state.messages.append({"role": "assistant", "content": answer})
-    supabase.table("messages").insert({"user_id": user_id, "role": "assistant", "content": answer}).execute()
+    try:
+        supabase.table("messages").insert({"user_id": user_id, "role": "assistant", "content": answer}).execute()
+    except Exception:
+        pass
